@@ -1,13 +1,5 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  createUserWithEmailAndPassword,
-  signOut,
-  GoogleAuthProvider,
-  signInWithPopup,
-} from 'firebase/auth';
-import { auth } from '../services/firebase';
+import { supabase, isMocked } from '../services/supabaseClient';
 
 const AuthContext = createContext({});
 
@@ -18,58 +10,70 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (firebaseUser) => {
-      setUser(firebaseUser ?? null);
+    if (isMocked) {
+      // Mocked Auth for demo
+      const localUser = localStorage.getItem('mockUser');
+      if (localUser) {
+        setUser(JSON.parse(localUser));
+      }
       setLoading(false);
-    });
-    return unsubscribe;
+      return;
+    }
+
+    // Real Supabase Auth
+    const getSession = async () => {
+      const { data: { session } } = await supabase.auth.getSession();
+      setUser(session?.user ?? null);
+      setLoading(false);
+    };
+
+    getSession();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange(
+      (event, session) => {
+        setUser(session?.user ?? null);
+      }
+    );
+
+    return () => {
+      authListener?.subscription.unsubscribe();
+    };
   }, []);
 
   const login = async (email, password) => {
-    try {
-      const { user } = await signInWithEmailAndPassword(auth, email, password);
-      return { data: { user }, error: null };
-    } catch (err) {
-      return { data: null, error: { message: err.message, code: err.code } };
+    if (isMocked) {
+      const mockUser = { id: 'mock-123', email };
+      localStorage.setItem('mockUser', JSON.stringify(mockUser));
+      setUser(mockUser);
+      return { user: mockUser, error: null };
     }
+    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+    return { data, error };
   };
 
   const signup = async (email, password) => {
-    try {
-      const { user } = await createUserWithEmailAndPassword(auth, email, password);
-      return { data: { user }, error: null };
-    } catch (err) {
-      return { data: null, error: { message: err.message, code: err.code } };
+    if (isMocked) {
+      const mockUser = { id: 'mock-123', email };
+      localStorage.setItem('mockUser', JSON.stringify(mockUser));
+      setUser(mockUser);
+      return { user: mockUser, error: null };
     }
-  };
-
-  const loginWithGoogle = async () => {
-    try {
-      const provider = new GoogleAuthProvider();
-      const { user } = await signInWithPopup(auth, provider);
-      return { data: { user }, error: null };
-    } catch (err) {
-      if (
-        err.code === 'auth/popup-closed-by-user' ||
-        err.code === 'auth/cancelled-popup-request'
-      ) {
-        return { data: null, error: null };
-      }
-      return { data: null, error: { message: err.message, code: err.code } };
-    }
+    const { data, error } = await supabase.auth.signUp({ email, password });
+    return { data, error };
   };
 
   const logout = async () => {
-    try {
-      await signOut(auth);
+    if (isMocked) {
+      localStorage.removeItem('mockUser');
+      setUser(null);
       return { error: null };
-    } catch (err) {
-      return { error: { message: err.message } };
     }
+    const { error } = await supabase.auth.signOut();
+    return { error };
   };
 
   return (
-    <AuthContext.Provider value={{ user, login, signup, loginWithGoogle, logout, loading }}>
+    <AuthContext.Provider value={{ user, login, signup, logout, loading, isMocked }}>
       {!loading && children}
     </AuthContext.Provider>
   );
